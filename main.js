@@ -14,8 +14,32 @@ audioLoader.load('assets/bgm.mp3', (buffer) => {
   backgroundMusic.setBuffer(buffer);
   backgroundMusic.setLoop(true);
   backgroundMusic.setVolume(0.05);
-  backgroundMusic.play();
 });
+
+function playCoinUpSound() {
+  const ctx = listener.context;
+  if (ctx.state === 'suspended') {
+    ctx.resume();
+  }
+
+  const now = ctx.currentTime;
+  const osc = ctx.createOscillator();
+  const gain = ctx.createGain();
+
+  osc.type = 'square';
+  osc.frequency.setValueAtTime(988, now);
+  osc.frequency.exponentialRampToValueAtTime(1319, now + 0.06);
+  osc.frequency.exponentialRampToValueAtTime(1568, now + 0.12);
+
+  gain.gain.setValueAtTime(0.0001, now);
+  gain.gain.exponentialRampToValueAtTime(0.12, now + 0.01);
+  gain.gain.exponentialRampToValueAtTime(0.0001, now + 0.35);
+
+  osc.connect(gain);
+  gain.connect(ctx.destination);
+  osc.start(now);
+  osc.stop(now + 0.35);
+}
 
 // Function to create a starfield
 function createStarfield() {
@@ -38,17 +62,97 @@ function createStarfield() {
   // Create Points mesh
   const stars = new THREE.Points(starGeometry, starMaterial);
   scene.add(stars);
+  return stars;
 }
 
-createStarfield();
+const starfield = createStarfield();
+
+function createForegroundStars() {
+  const starCount = 120;
+  const starGeometry = new THREE.BufferGeometry();
+  const starMaterial = new THREE.PointsMaterial({
+    color: 0xbbddff,
+    size: 2.2,
+    transparent: true,
+    opacity: 0.85,
+    depthWrite: false,
+  });
+
+  const starVertices = [];
+  for (let i = 0; i < starCount; i++) {
+    starVertices.push(
+      THREE.MathUtils.randFloatSpread(28),
+      THREE.MathUtils.randFloatSpread(16),
+      THREE.MathUtils.randFloat(2, 14)
+    );
+  }
+
+  starGeometry.setAttribute('position', new THREE.Float32BufferAttribute(starVertices, 3));
+  const foregroundStars = new THREE.Points(starGeometry, starMaterial);
+  scene.add(foregroundStars);
+  return foregroundStars;
+}
+
+const foregroundStars = createForegroundStars();
 
 
 
 const renderer = new THREE.WebGLRenderer();
 renderer.setSize(window.innerWidth, window.innerHeight);
+renderer.shadowMap.enabled = true;
+renderer.shadowMap.type = THREE.PCFSoftShadowMap;
 document.body.appendChild(renderer.domElement);
 
-scene.background = new THREE.Color(0x111111); // Dark gray/black color
+scene.background = new THREE.Color(0x05060a); // Deep space backdrop
+
+// Soft ambient + hemisphere lighting so the laboratory surface textures read
+// even away from the alien's own point light.
+const labAmbient = new THREE.AmbientLight(0x8294a8, 0.16);
+scene.add(labAmbient);
+const labHemisphere = new THREE.HemisphereLight(0xaebfd2, 0x20262f, 0.16);
+scene.add(labHemisphere);
+// Soft overhead fill so the whole corridor is visible (and gives gentle shadows).
+const labFill = new THREE.DirectionalLight(0xdfe8f2, 0.12);
+labFill.position.set(6, 20, 8);
+scene.add(labFill);
+
+// Laboratory metal-panel textures (CC0, Poly Haven) loaded from public/textures.
+const textureLoader = new THREE.TextureLoader();
+const maxAnisotropy = renderer.capabilities.getMaxAnisotropy();
+
+function loadSurfaceTextures(asset, repeatX, repeatY) {
+  const make = (map, isColor) => {
+    const tex = textureLoader.load(`textures/${asset}_${map}.jpg`);
+    tex.wrapS = tex.wrapT = THREE.RepeatWrapping;
+    tex.repeat.set(repeatX, repeatY);
+    tex.anisotropy = maxAnisotropy;
+    if (isColor) tex.colorSpace = THREE.SRGBColorSpace;
+    return tex;
+  };
+  return {
+    map: make('diff', true),
+    normalMap: make('nor_gl', false),
+    roughnessMap: make('rough', false),
+    metalnessMap: make('metal', false),
+  };
+}
+
+// Organic skin texture (CC0, Poly Haven) for the alien body and limbs.
+function loadAlienSkin(repeatX, repeatY) {
+  const make = (map, isColor) => {
+    const tex = textureLoader.load(`textures/alien_skin_${map}.jpg`);
+    tex.wrapS = tex.wrapT = THREE.RepeatWrapping;
+    tex.repeat.set(repeatX, repeatY);
+    tex.anisotropy = maxAnisotropy;
+    if (isColor) tex.colorSpace = THREE.SRGBColorSpace;
+    return tex;
+  };
+  return {
+    map: make('diff', true),
+    normalMap: make('nor_gl', false),
+    roughnessMap: make('rough', false),
+  };
+}
 
 function translationMatrix(tx, ty, tz) {
   return new THREE.Matrix4().set(
@@ -87,10 +191,28 @@ function rotationMatrixZ(theta) {
 }
 
 // Create player
-const playerGeometry = new THREE.SphereGeometry(0.5, 16, 16);
-const playerMaterial = new THREE.MeshBasicMaterial({ color: 0xff0000 });
+const ALIEN_GRAY = 0x9aa1ab;
+const playerGeometry = new THREE.SphereGeometry(0.5, 48, 32);
+const playerMaterial = new THREE.MeshStandardMaterial({
+  ...loadAlienSkin(3, 2),
+  color: ALIEN_GRAY,
+  roughness: 1.0,
+  metalness: 0.0,
+  normalScale: new THREE.Vector2(0.8, 0.8),
+  emissive: 0x12241c,
+  emissiveIntensity: 0.5,
+  flatShading: false,
+});
 const player = new THREE.Mesh(playerGeometry, playerMaterial);
+player.castShadow = true;
+player.receiveShadow = true;
 scene.add(player);
+
+const playerGlow = new THREE.Mesh(
+  new THREE.SphereGeometry(0.9, 32, 24),
+  new THREE.MeshBasicMaterial({ color: 0x6effb0, transparent: true, opacity: 0.22 })
+);
+player.add(playerGlow);
 
 player.position.y = 1; // Start above the ground
 
@@ -98,9 +220,9 @@ let leftArm, rightArm, leftLeg, rightLeg, leftAntenna, rightAntenna;
 
 // Function to add arms, legs, and antennas to the player
 function addCharacterParts() {
-  // Arm geometry and material
-  const armGeometry = new THREE.CylinderGeometry(0.1, 0.1, 0.3, 12);
-  const armMaterial = new THREE.MeshBasicMaterial({ color: 0xff0000 });
+  // Arm geometry and material (capsule = rounded ends, no hard cylinder rims)
+  const armGeometry = new THREE.CapsuleGeometry(0.1, 0.12, 12, 24);
+  const armMaterial = new THREE.MeshStandardMaterial({ ...loadAlienSkin(1, 2), color: ALIEN_GRAY, roughness: 1.0, metalness: 0.0, flatShading: false });
 
   // Left Arm
   leftArm = new THREE.Mesh(armGeometry, armMaterial);
@@ -114,9 +236,9 @@ function addCharacterParts() {
   rightArm.rotation.z = -Math.PI / 4;
   player.add(rightArm);
 
-  // Leg geometry and material
-  const legGeometry = new THREE.CylinderGeometry(0.15, 0.15, 0.5, 12);
-  const legMaterial = new THREE.MeshBasicMaterial({ color: 0xff0000 });
+  // Leg geometry and material (capsule = rounded ends, no hard cylinder rims)
+  const legGeometry = new THREE.CapsuleGeometry(0.15, 0.2, 12, 24);
+  const legMaterial = new THREE.MeshStandardMaterial({ ...loadAlienSkin(1, 2), color: ALIEN_GRAY, roughness: 1.0, metalness: 0.0, flatShading: false });
 
   // Left Leg
   leftLeg = new THREE.Mesh(legGeometry, legMaterial);
@@ -129,8 +251,8 @@ function addCharacterParts() {
   player.add(rightLeg);
 
   // Antenna geometry and material
-  const antennaGeometry = new THREE.CylinderGeometry(0.05, 0.05, 0.3, 8);
-  const antennaMaterial = new THREE.MeshBasicMaterial({ color: 0x0000ff });
+  const antennaGeometry = new THREE.CapsuleGeometry(0.04, 0.22, 8, 16);
+  const antennaMaterial = new THREE.MeshStandardMaterial({ color: 0x6f7680, roughness: 0.6, metalness: 0.2, flatShading: false });
 
   // Left Antenna
   leftAntenna = new THREE.Mesh(antennaGeometry, antennaMaterial);
@@ -145,8 +267,14 @@ function addCharacterParts() {
   player.add(rightAntenna);
 
   // Small sphere at the end of each antenna
-  const antennaTipGeometry = new THREE.SphereGeometry(0.1, 8, 8);
-  const antennaTipMaterial = new THREE.MeshBasicMaterial({ color: 0x0000ff });
+  const antennaTipGeometry = new THREE.SphereGeometry(0.1, 24, 16);
+  const antennaTipMaterial = new THREE.MeshStandardMaterial({
+    color: 0xb6bcc6,
+    roughness: 0.5,
+    metalness: 0.2,
+    emissive: 0x1c3a2a,
+    emissiveIntensity: 0.7,
+  });
 
   // Left Antenna Tip
   const leftAntennaTip = new THREE.Mesh(antennaTipGeometry, antennaTipMaterial);
@@ -157,6 +285,12 @@ function addCharacterParts() {
   const rightAntennaTip = new THREE.Mesh(antennaTipGeometry, antennaTipMaterial);
   rightAntennaTip.position.set(0, 0.2, 0);
   rightAntenna.add(rightAntennaTip);
+
+  [leftArm, rightArm, leftLeg, rightLeg, leftAntenna, rightAntenna,
+    leftAntennaTip, rightAntennaTip].forEach((part) => {
+      part.castShadow = true;
+      part.receiveShadow = true;
+    });
 }
 
 // Call the function to add character parts to the player
@@ -164,314 +298,342 @@ addCharacterParts();
 
 
 
-const platformMaterial = new THREE.MeshPhongMaterial({
-  color: 0x00ff00,          // Swampy green-blue color
-  shininess: 40,            // Moderate shininess for specular highlights
-  specular: 0xffffff        // White specular highlight
+const platformMaterial = new THREE.MeshStandardMaterial({
+  ...loadSurfaceTextures('metal_plate_02', 4, 4),
+  color: 0xb4bcc6,          // Cool steel tint for the lab floor
+  metalness: 0.45,
+  roughness: 0.85,
+});
+
+const TUNNEL_WIDTH = 15;
+const TUNNEL_HEIGHT = 15;
+const TUNNEL_DEPTH = 15;
+const TUNNEL_HALF_WIDTH = TUNNEL_WIDTH / 2;
+const PANEL_THICKNESS = 0.1;
+const WALL_THICKNESS = 0.1;
+const PLAYER_RADIUS = 0.5;
+const WALL_INNER_X = TUNNEL_HALF_WIDTH - WALL_THICKNESS / 2;
+// Leg bottoms sit at local y=-0.75; after ±90° wall rotation that is 0.75 toward the wall
+const FEET_WALL_OFFSET = 0.75;
+const PLAYER_MAX_X = WALL_INNER_X - FEET_WALL_OFFSET;
+const PLAYER_MIN_X = -PLAYER_MAX_X;
+const FLOOR_ATTACH_Y = 1;
+
+// --- Polygon tunnel (radial movement) ---
+const APOTHEM = TUNNEL_HALF_WIDTH;          // center-to-face distance (7.5)
+const CENTER_Y = TUNNEL_HEIGHT / 2;         // tunnel axis height (7.5) -> floor at y=0
+const STAND_OFFSET = 1;                     // player center sits this far above a face
+const MOVE_LINEAR = 0.12;                   // linear walk speed around the tube
+const OUT_OF_BOUNDS = 7;                    // hClear below -this => fell out, reset
+const SHAPE_ZONE_LENGTH = 40;               // segments before the shape changes
+const TUNNEL_SHAPES = [4];                  // square tunnel — clearer walls, wider floor
+
+function getTunnelSides(index) {
+  const zone = Math.floor(index / SHAPE_ZONE_LENGTH) % TUNNEL_SHAPES.length;
+  return TUNNEL_SHAPES[zone];
+}
+
+const TOTAL_SEGMENTS = Math.floor(1000 / TUNNEL_DEPTH) + 1;
+const GRACE_PROGRESS = 0.10;
+
+function getSegmentProgress(segmentIndex) {
+  if (TOTAL_SEGMENTS <= 1) return 1;
+  return Math.min(1, segmentIndex / (TOTAL_SEGMENTS - 1));
+}
+
+function getFloorHoleSize(progress) {
+  if (progress < GRACE_PROGRESS) return 0;
+  const t = (progress - GRACE_PROGRESS) / (1 - GRACE_PROGRESS);
+  const eased = t * t;
+  const min = 3;
+  const max = 8;
+  const jitter = (Math.random() - 0.5) * 1.2;
+  return Math.max(min, Math.min(max, Math.round(THREE.MathUtils.lerp(min, max, eased) + jitter)));
+}
+
+// Forward gaps on the floor (along -Z) that the player must jump over.
+function makeFloorZHole(progress, sideLen) {
+  const hw = getFloorHoleSize(progress);
+  if (hw <= 0) return null;
+  const hxw = Math.min(hw, sideLen * 0.55);
+  const maxZ = (TUNNEL_DEPTH - hw) / 2;
+  const maxX = (sideLen - hxw) / 2;
+  const hz = THREE.MathUtils.randFloat(-maxZ, maxZ);
+  // Bias toward the center of the floor so holes sit in the running lane.
+  const hx = THREE.MathUtils.randFloatSpread(maxX * 0.5);
+  return { hx, hz, hw, hxw };
+}
+
+function buildFloorFace(seg, faceCenter, sideLen, zHole, material) {
+  const faceGroup = new THREE.Group();
+  faceGroup.position.set(Math.sin(faceCenter) * APOTHEM, CENTER_Y - Math.cos(faceCenter) * APOTHEM, 0);
+  faceGroup.rotation.z = faceCenter;
+
+  const addPanel = (width, depth, offsetX, offsetZ) => {
+    if (width <= 0.001 || depth <= 0.001) return;
+    const m = new THREE.Mesh(new THREE.BoxGeometry(width, PANEL_THICKNESS, depth), material);
+    m.position.set(offsetX, 0, offsetZ);
+    faceGroup.add(m);
+  };
+
+  if (!zHole) {
+    addPanel(sideLen, TUNNEL_DEPTH, 0, 0);
+  } else {
+    const { hx, hz, hw, hxw } = zHole;
+    const halfLen = sideLen / 2;
+    const halfDepth = TUNNEL_DEPTH / 2;
+
+    if (hx - hxw / 2 > -halfLen) {
+      const leftW = hx - hxw / 2 + halfLen;
+      addPanel(leftW, TUNNEL_DEPTH, -halfLen + leftW / 2, 0);
+    }
+    if (hx + hxw / 2 < halfLen) {
+      const rightW = halfLen - hx - hxw / 2;
+      addPanel(rightW, TUNNEL_DEPTH, halfLen - rightW / 2, 0);
+    }
+    if (hz - hw / 2 > -halfDepth) {
+      const frontD = hz - hw / 2 + halfDepth;
+      addPanel(hxw, frontD, hx, halfDepth - frontD / 2);
+    }
+    if (hz + hw / 2 < halfDepth) {
+      const backD = halfDepth - hz - hw / 2;
+      addPanel(hxw, backD, hx, -halfDepth + backD / 2);
+    }
+  }
+  seg.add(faceGroup);
+}
+
+function getWallHoleSize(progress) {
+  if (progress < GRACE_PROGRESS) return 0;
+  const t = (progress - GRACE_PROGRESS) / (1 - GRACE_PROGRESS);
+  return Math.round(THREE.MathUtils.lerp(3, 6, t * t));
+}
+
+function getWallHoleChance(progress) {
+  if (progress < GRACE_PROGRESS) return 0;
+  const t = (progress - GRACE_PROGRESS) / (1 - GRACE_PROGRESS);
+  return THREE.MathUtils.lerp(0.25, 1, t * t);
+}
+
+function enableShadows(obj) {
+  obj.traverse((o) => {
+    if (o.isMesh) {
+      o.castShadow = true;
+      o.receiveShadow = true;
+    }
+  });
+  return obj;
+}
+
+// Build one prism slice of the polygon tunnel at world z. The cross-section is
+// a regular polygon with `sides` faces; one face is always centered at the
+// bottom (theta = 0) so the floor stays consistent when the shape changes.
+function makeFaceHole(progress, sideLen) {
+  const chance = getWallHoleChance(progress);
+  if (Math.random() >= chance) return null;
+  let hw = getWallHoleSize(progress);
+  hw = Math.min(hw, sideLen * 0.7);
+  if (hw <= 0) return null;
+  const maxOffset = (sideLen - hw) / 2;
+  const hx = THREE.MathUtils.randFloat(-maxOffset, maxOffset);
+  return { hx, hw };
+}
+
+function buildFace(seg, faceCenter, sideLen, hole, material) {
+  const faceGroup = new THREE.Group();
+  faceGroup.position.set(Math.sin(faceCenter) * APOTHEM, CENTER_Y - Math.cos(faceCenter) * APOTHEM, 0);
+  faceGroup.rotation.z = faceCenter;
+
+  const addPanel = (width, offsetX) => {
+    if (width <= 0.001) return;
+    const m = new THREE.Mesh(new THREE.BoxGeometry(width, PANEL_THICKNESS, TUNNEL_DEPTH), material);
+    m.position.set(offsetX, 0, 0);
+    faceGroup.add(m);
+  };
+
+  if (!hole) {
+    addPanel(sideLen, 0);
+  } else {
+    const left = -sideLen / 2;
+    const right = sideLen / 2;
+    const holeL = hole.hx - hole.hw / 2;
+    const holeR = hole.hx + hole.hw / 2;
+    if (holeL > left) addPanel(holeL - left, (left + holeL) / 2);
+    if (holeR < right) addPanel(right - holeR, (right + holeR) / 2);
+  }
+  seg.add(faceGroup);
+}
+
+function createSegment(z, index) {
+  const progress = getSegmentProgress(index);
+  const sides = getTunnelSides(index);
+  const faceStep = (Math.PI * 2) / sides;
+  const sideLen = 2 * APOTHEM * Math.tan(Math.PI / sides);
+
+  const seg = new THREE.Group();
+  seg.position.set(0, 0, z);
+
+  const faces = [];
+  for (let k = 0; k < sides; k++) {
+    const faceCenter = k * faceStep;
+    if (k === 0) {
+      const zHole = makeFloorZHole(progress, sideLen);
+      buildFloorFace(seg, faceCenter, sideLen, zHole, platformMaterial);
+      faces.push({ hole: null, zHole });
+    } else {
+      const hole = makeFaceHole(progress, sideLen);
+      buildFace(seg, faceCenter, sideLen, hole, wallMaterial);
+      faces.push({ hole, zHole: null });
+    }
+  }
+
+  enableShadows(seg);
+  scene.add(seg);
+  return { z, group: seg, sides, faceStep, sideLen, faces };
+}
+
+
+const wallMaterial = new THREE.MeshStandardMaterial({
+  ...loadSurfaceTextures('metal_plate', 3, 3),
+  color: 0xaab4c0,          // Brushed-steel lab wall panels
+  metalness: 0.45,
+  roughness: 0.85,
 });
 
 
-function createPlatform(x, y, z) {
-  const platformGroup = new THREE.Group();
- 
-  // Define a material with Phong shading for specular highlights
-
-  const platformWidth = 15;
-  const platformHeight = 0.1;
-  const platformDepth = 10;
-  const holeSize = 3 * Math.floor(Math.random() * 3) + 5;
-
-  const holeOffsetX = Math.random() * (platformWidth - holeSize) - (platformWidth - holeSize) / 2;
-  const holeOffsetZ = Math.random() * (platformDepth - holeSize) - (platformDepth - holeSize) / 2;
-
-  if (holeOffsetX - holeSize / 2 > -platformWidth / 2) {
-    const leftWidth = holeOffsetX - holeSize / 2 + platformWidth / 2;
-    const leftPlatformGeometry = new THREE.BoxGeometry(leftWidth, platformHeight, platformDepth);
-    const leftPlatform = new THREE.Mesh(leftPlatformGeometry, platformMaterial);
-    leftPlatform.position.set(x - platformWidth / 2 + leftWidth / 2, y, z);
-    platformGroup.add(leftPlatform);
-  }
-
-  if (holeOffsetX + holeSize / 2 < platformWidth / 2) {
-    const rightWidth = platformWidth / 2 - holeOffsetX - holeSize / 2;
-    const rightPlatformGeometry = new THREE.BoxGeometry(rightWidth, platformHeight, platformDepth);
-    const rightPlatform = new THREE.Mesh(rightPlatformGeometry, platformMaterial);
-    rightPlatform.position.set(x + platformWidth / 2 - rightWidth / 2, y, z);
-    platformGroup.add(rightPlatform);
-  }
-
-  if (holeOffsetZ - holeSize / 2 > -platformDepth / 2) {
-    const frontDepth = holeOffsetZ - holeSize / 2 + platformDepth / 2;
-    const frontPlatformGeometry = new THREE.BoxGeometry(holeSize, platformHeight, frontDepth);
-    const frontPlatform = new THREE.Mesh(frontPlatformGeometry, platformMaterial);
-    frontPlatform.position.set(x + holeOffsetX, y, z + platformDepth / 2 - frontDepth / 2);
-    platformGroup.add(frontPlatform);
-  }
-
-  if (holeOffsetZ + holeSize / 2 < platformDepth / 2) {
-    const backDepth = platformDepth / 2 - holeOffsetZ - holeSize / 2;
-    const backPlatformGeometry = new THREE.BoxGeometry(holeSize, platformHeight, backDepth);
-    const backPlatform = new THREE.Mesh(backPlatformGeometry, platformMaterial);
-    backPlatform.position.set(x + holeOffsetX, y, z - platformDepth / 2 + backDepth / 2);
-    platformGroup.add(backPlatform);
-  }
-
-  platformGroup.position.set(x, y, z);
-  scene.add(platformGroup);
-
-  return platformGroup;
-}
-
-
-const startMaterial = new THREE.MeshPhongMaterial({ color: 0x9000ff, flatShading: false });
-function createStart(x, y, z) {
-  const startGeo = new THREE.BoxGeometry(15, 0.11, 10);
-  const start = new THREE.Mesh(startGeo, startMaterial);
-  scene.add(start);
-  return start;
-}
-
-
-const wallMaterial = new THREE.MeshPhongMaterial({ color: 0x00ff00, flatShading: false });
-const wallGeo = new THREE.BoxGeometry(0.1, 10, 10);
-
-
-function createRWall(x, y, z) {
-  const rightWall = new THREE.Group();
-  const wallWidth = 0.1;
-  const wallHeight = 10;
-  const wallDepth = 10;
-  const holeSize = Math.random() < 0.5 ? 6 : 7; // Randomly choose between 4 and 5
-
-  // Decide whether to create a hole for each wall randomly
-  const createRightHole = Math.random() < 0.4;
-  if (createRightHole) {
-    const maxOffsetRange = wallHeight / 2 - holeSize / 2;
-    const holeOffsetY = THREE.MathUtils.randFloat(-maxOffsetRange, maxOffsetRange);
-
-    if (holeOffsetY - holeSize / 2 > -wallHeight / 2) {
-      const upperHeight = holeOffsetY - holeSize / 2 + wallHeight / 2;
-      const upperWallGeometry = new THREE.BoxGeometry(wallWidth, upperHeight, wallDepth);
-      const upperWall = new THREE.Mesh(upperWallGeometry, wallMaterial);
-      upperWall.position.set(x + 7.5, y + 5 - wallHeight / 2 + upperHeight / 2, z);
-      rightWall.add(upperWall);
-    }
-
-    if (holeOffsetY + holeSize / 2 < wallHeight / 2) {
-      const lowerHeight = wallHeight / 2 - holeOffsetY - holeSize / 2;
-      const lowerWallGeometry = new THREE.BoxGeometry(wallWidth, lowerHeight, wallDepth);
-      const lowerWall = new THREE.Mesh(lowerWallGeometry, wallMaterial);
-      lowerWall.position.set(x + 7.5, y + 5 + wallHeight / 2 - lowerHeight / 2, z);
-      rightWall.add(lowerWall);
-    }
-  } else {
-    const fullWallGeometry = new THREE.BoxGeometry(wallWidth, wallHeight, wallDepth);
-    const fullWall = new THREE.Mesh(fullWallGeometry, wallMaterial);
-    fullWall.position.set(x + 7.5, y + 5, z);
-    rightWall.add(fullWall);
-  }
-
-  scene.add(rightWall);
-  return rightWall;
-}
-
-function createLWall(x, y, z) {
-  const leftWall = new THREE.Group();
-  const wallWidth = 0.1;
-  const wallHeight = 10;
-  const wallDepth = 10;
-  const holeSize = Math.random() < 0.5 ? 6 : 7; // Randomly choose between 4 and 5
-
-  // Decide whether to create a hole for each wall randomly
-  const createLeftHole = Math.random() < 0.4;
-  if (createLeftHole) {
-    const maxOffsetRange = wallHeight / 2 - holeSize / 2;
-    const holeOffsetY = THREE.MathUtils.randFloat(-maxOffsetRange, maxOffsetRange);
-
-    if (holeOffsetY - holeSize / 2 > -wallHeight / 2) {
-      const upperHeight = holeOffsetY - holeSize / 2 + wallHeight / 2;
-      const upperWallGeometry = new THREE.BoxGeometry(wallWidth, upperHeight, wallDepth);
-      const upperWall = new THREE.Mesh(upperWallGeometry, wallMaterial);
-      upperWall.position.set(x - 7.5, y + 5 - wallHeight / 2 + upperHeight / 2, z);
-      leftWall.add(upperWall);
-    }
-
-    if (holeOffsetY + holeSize / 2 < wallHeight / 2) {
-      const lowerHeight = wallHeight / 2 - holeOffsetY - holeSize / 2;
-      const lowerWallGeometry = new THREE.BoxGeometry(wallWidth, lowerHeight, wallDepth);
-      const lowerWall = new THREE.Mesh(lowerWallGeometry, wallMaterial);
-      lowerWall.position.set(x - 7.5, y + 5 + wallHeight / 2 - lowerHeight / 2, z);
-      leftWall.add(lowerWall);
-    }
-  } else {
-    const fullWallGeometry = new THREE.BoxGeometry(wallWidth, wallHeight, wallDepth);
-    const fullWall = new THREE.Mesh(fullWallGeometry, wallMaterial);
-    fullWall.position.set(x - 7.5, y + 5, z);
-    leftWall.add(fullWall);
-  }
-
-  scene.add(leftWall);
-  return leftWall;
-}
-
-const playerLight = new THREE.PointLight(0xFFFFFF, 1.5, 10, 2);
+// Flashlight: a spotlight mounted just above/behind the alien (in his local
+// frame) aimed forward (-Z) so it lights the path ahead and casts his shadow.
+const playerLight = new THREE.SpotLight(0xffffff, 12, 65, Math.PI / 3.2, 0.45, 1.25);
+playerLight.position.set(0, 1.2, 1.4);
+playerLight.castShadow = true;
+playerLight.shadow.mapSize.set(1024, 1024);
+playerLight.shadow.camera.near = 0.5;
+playerLight.shadow.camera.far = 50;
+playerLight.shadow.bias = -0.0004;
 player.add(playerLight);
-playerLight.position.set(0, 0, 0); // Center of the player
+
+const playerLightTarget = new THREE.Object3D();
+playerLightTarget.position.set(0, -0.6, -20); // forward and slightly down
+player.add(playerLightTarget);
+playerLight.target = playerLightTarget;
 
 
-const lightHelper = new THREE.PointLightHelper(playerLight, 0.5); // Visual helper with a radius of 0.5
-scene.add(lightHelper);
 
 
-
-
-const roofMaterial = new THREE.MeshPhongMaterial({
-  color: 0x00ff00,          // Swampy green-blue color
-  shininess: 40,            // Moderate shininess for specular highlights
-  specular: 0xffffff        // White specular highlight
+const roofMaterial = new THREE.MeshStandardMaterial({
+  ...loadSurfaceTextures('metal_plate', 3, 3),
+  color: 0x97a1ad,          // Slightly darker ceiling panels
+  metalness: 0.45,
+  roughness: 0.85,
+  side: THREE.DoubleSide,
 });
 
 
 
-function createRoof(x, y, z) {
-  const roofGroup = new THREE.Group();
-  const roofWidth = 15; // Width of the roof
-  const roofHeight = 0.1; // Thickness of the roof
-  const roofDepth = 10; // Depth of the roof
-  const holeSize = 3 * Math.floor(Math.random() * 3) + 5; // Random hole size (multiples of 3 between 5 and 11)
+// --- Endless polygon tunnel streaming ---
+// Segments are generated ahead of the player and recycled once well behind,
+// so the corridor never ends and there is no empty void to run into.
+const SEGMENT_LENGTH = TUNNEL_DEPTH;
+const VIEW_AHEAD = 360;   // keep this much tunnel generated ahead of the player
+const KEEP_BEHIND = 90;   // recycle segments once this far behind the player
+const segments = [];
+const segByIndex = new Map(); // z-index -> segment, for fast collision lookup
+let nextSegmentIndex = 0; // ever-increasing, drives difficulty progression
+let frontierZ = 0;        // most-negative z generated so far
 
-  const holeOffsetX = Math.random() * (roofWidth - holeSize) - (roofWidth - holeSize) / 2; // Random X offset for the hole
-  const holeOffsetZ = Math.random() * (roofDepth - holeSize) - (roofDepth - holeSize) / 2; // Random Z offset for the hole
-
-  // Left part of the roof
-  if (holeOffsetX - holeSize / 2 > -roofWidth / 2) {
-    const leftWidth = holeOffsetX - holeSize / 2 + roofWidth / 2;
-    const leftRoofGeometry = new THREE.BoxGeometry(leftWidth, roofHeight, roofDepth);
-    const leftRoof = new THREE.Mesh(leftRoofGeometry, roofMaterial);
-    leftRoof.position.set(x - roofWidth / 2 + leftWidth / 2, y, z);
-    roofGroup.add(leftRoof);
-  }
-
-  // Right part of the roof
-  if (holeOffsetX + holeSize / 2 < roofWidth / 2) {
-    const rightWidth = roofWidth / 2 - holeOffsetX - holeSize / 2;
-    const rightRoofGeometry = new THREE.BoxGeometry(rightWidth, roofHeight, roofDepth);
-    const rightRoof = new THREE.Mesh(rightRoofGeometry, roofMaterial);
-    rightRoof.position.set(x + roofWidth / 2 - rightWidth / 2, y, z);
-    roofGroup.add(rightRoof);
-  }
-
-  // Front part of the roof
-  if (holeOffsetZ - holeSize / 2 > -roofDepth / 2) {
-    const frontDepth = holeOffsetZ - holeSize / 2 + roofDepth / 2;
-    const frontRoofGeometry = new THREE.BoxGeometry(holeSize, roofHeight, frontDepth);
-    const frontRoof = new THREE.Mesh(frontRoofGeometry, roofMaterial);
-    frontRoof.position.set(x + holeOffsetX, y, z + roofDepth / 2 - frontDepth / 2);
-    roofGroup.add(frontRoof);
-  }
-
-  // Back part of the roof
-  if (holeOffsetZ + holeSize / 2 < roofDepth / 2) {
-    const backDepth = roofDepth / 2 - holeOffsetZ - holeSize / 2;
-    const backRoofGeometry = new THREE.BoxGeometry(holeSize, roofHeight, backDepth);
-    const backRoof = new THREE.Mesh(backRoofGeometry, roofMaterial);
-    backRoof.position.set(x + holeOffsetX, y, z - roofDepth / 2 + backDepth / 2);
-    roofGroup.add(backRoof);
-  }
-
-  roofGroup.position.set(x, y + 10, z);
-  scene.add(roofGroup);
-
-  return roofGroup;
+function zKey(z) {
+  return Math.round(-z / TUNNEL_DEPTH);
 }
 
+function spawnSegment(z) {
+  const seg = createSegment(z, nextSegmentIndex++);
+  segments.push(seg);
+  segByIndex.set(zKey(z), seg);
+}
 
-// Generate platforms and walls
-const platforms = [];
-const rWall = [];
-const lWall = [];
-const roofs = [];
-const start = [];
+function despawnSegment(seg) {
+  scene.remove(seg.group);
+  seg.group.traverse((o) => { if (o.isMesh && o.geometry) o.geometry.dispose(); });
+  segByIndex.delete(zKey(seg.z));
+}
 
-start.push(createStart(0, 0, 0))
-for (let i = 0; i < 1000; i = i + 2) {
-  if(i % 3 == 0){
-    platforms.push(createPlatform(0, 0, -i ));
-    rWall.push(createRWall(0, 0, -i * 2));
-  
-    roofs.push(createRoof(0, 0, -i  ));
-    lWall.push(createLWall(0, 0, -i * 2 ));
+function fillTunnelAhead(targetZ) {
+  while (frontierZ >= targetZ) {
+    spawnSegment(frontierZ);
+    frontierZ -= SEGMENT_LENGTH;
   }
 }
 
-// Raycaster for detecting platforms below player
-const raycaster = new THREE.Raycaster();
+function updateTunnel() {
+  fillTunnelAhead(player.position.z - VIEW_AHEAD);
+  while (segments.length && segments[0].z > player.position.z + KEEP_BEHIND) {
+    despawnSegment(segments.shift());
+  }
+}
 
-const downVector = new THREE.Vector3(0, -1, 0); // Downward direction
-const rightVector = new THREE.Vector3(1, 0, 0); // Right direction
-const leftVector = new THREE.Vector3(-1, 0, 0); // Left direction
-const upVector = new THREE.Vector3(0, 1, 0); // Downward direction
+// Rebuild the tunnel from the start (used when the player respawns at z=0).
+function resetTunnel() {
+  while (segments.length) despawnSegment(segments.pop());
+  frontierZ = 0;
+  nextSegmentIndex = 0;
+  fillTunnelAhead(-VIEW_AHEAD);
+}
 
+function segmentAt(z) {
+  return segByIndex.get(zKey(z));
+}
 
-// Player movement variables
-let velocityY = 9.81;
-const gravity = -0.002;
-const jumpStrength = 0.15;
-let isJumping = false;
+// Is there solid tunnel surface at angle `theta` and depth `z`?
+// (false = an open hole the player should fall through.)
+function isSolidAt(theta, z) {
+  const seg = segmentAt(z);
+  if (!seg) return false;
+  let k = Math.round(theta / seg.faceStep);
+  const faceCenter = k * seg.faceStep;
+  k = ((k % seg.sides) + seg.sides) % seg.sides;
+  const face = seg.faces[k];
+
+  const local = theta - faceCenter;
+  const xOnFace = APOTHEM * Math.tan(local);
+
+  // Floor pits: rectangular gap along the forward (Z) axis.
+  if (face.zHole) {
+    const relZ = z - seg.z;
+    const inZHole = Math.abs(relZ - face.zHole.hz) <= face.zHole.hw / 2;
+    const inXHole = Math.abs(xOnFace - face.zHole.hx) <= face.zHole.hxw / 2;
+    if (inZHole && inXHole) return false;
+  }
+
+  // Side-wall gaps: tangential hole on angled faces.
+  if (face.hole) {
+    return Math.abs(xOnFace - face.hole.hx) > face.hole.hw / 2;
+  }
+  return true;
+}
+
+// Build the initial stretch of tunnel ahead of the player.
+fillTunnelAhead(-VIEW_AHEAD);
+
+// --- Radial player movement state ---
+const gravity = -0.002;          // pulls the player outward toward the wall
+const jumpStrength = 0.15;       // inward (toward tunnel axis) launch speed
 let forwardSpeed = 0.07;
-const endPositionZ = -2000; // Define end position where player stops
-
-const gravityDirection = new THREE.Vector3(0, 0, 1); // Gravity pulls toward the wall
- 
-let side = null;
-
-// Track if the game has started
 let gameStarted = false;
+let isJumping = false;
+let theta = 0;                   // angular position around the tunnel axis (0 = floor)
+let hClear = STAND_OFFSET;       // perpendicular clearance above the current face
+let velocityY = 0;               // radial velocity of hClear (also drives arm swing)
 
-// Check start platform
-function checkStartBelow() {
-  raycaster.set(player.position, downVector);
-  const intersects = raycaster.intersectObjects(start);
-
-  // Return true if a platform is detected close below the player
-  return intersects.length > 0 && intersects[0].distance <= 1;
+function applyRadialPosition() {
+  const seg = segmentAt(player.position.z);
+  const faceStep = seg ? seg.faceStep : Math.PI / 2;
+  const faceCenter = Math.round(theta / faceStep) * faceStep;
+  const local = theta - faceCenter;
+  const r = (APOTHEM - hClear) / Math.cos(local);
+  player.position.x = Math.sin(theta) * r;
+  player.position.y = CENTER_Y - Math.cos(theta) * r;
+  player.rotation.z = theta;
 }
-
-// Check if there's a platform below the player
-function checkPlatformBelow() {
-  raycaster.set(player.position, downVector);
-  const intersects = raycaster.intersectObjects(platforms);
-
-  // Return true if a platform is detected close below the player
-  return intersects.length > 0 && intersects[0].distance <= 1;
-}
-
-// Function to check for wall collisions on the right
-function checkPlatformRight() {
-  raycaster.set(player.position, rightVector);
-  const intersects = raycaster.intersectObjects(rWall);
-
-  // Return true if a platform is detected close below the player
-  return intersects.length > 0 && intersects[0].distance <= 1;
-}
-
-// Function to check for wall collisions on the left
-function checkPlatformLeft() {
-  raycaster.set(player.position, leftVector);
-  const intersects = raycaster.intersectObjects(lWall);
-
-  // Return true if a platform is detected close below the player
-  return intersects.length > 0 && intersects[0].distance <= 1;
-}
-
-function checkPlatformAbove() {
-  raycaster.set(player.position, upVector);
-  const intersects = raycaster.intersectObjects(roofs);
-
-  // Return true if a platform is detected close below the player
-  return intersects.length > 0 && intersects[0].distance <= 1;
-}
-
 
 // Set up a clock to track time for the animation
 const clock = new THREE.Clock();
@@ -488,15 +650,19 @@ const fallThreshold = -40; // Define the height at which to reset the player
 const startPosition = { x: 0, y: 1, z: 0 }; // Starting position for the player
 
 function resetPlayer() {
-  // Reset position to the starting position
+  // Reset position to the starting position (floor of the polygon tunnel)
   player.position.set(startPosition.x, startPosition.y, startPosition.z);
 
   // Reset velocity and other states
   velocityY = 0;
   gameStarted = false;
   isJumping = false;
-  player.rotation.z = player.rotation.z * 0; // Rotate player to face the wall
-  side = "floor";
+  theta = 0;
+  hClear = STAND_OFFSET;
+  score = 0;
+  scoreElement.classList.remove('visible');
+  scoreElement.textContent = 'Score: 0';
+  player.rotation.set(0, 0, 0);
 
   // Optionally reset arm position
   leftArm.matrix.identity();
@@ -505,10 +671,9 @@ function resetPlayer() {
   rightArm.position.set(0.6, 0.5, 0);
   leftArm.updateMatrixWorld(true);
   rightArm.updateMatrixWorld(true);
+
+  resetTunnel();
 }
-// side = "right"; 
-// side = "left";  
-side = "floor";
 
 let lastSpeedUpdate = 0; // Track last speed update time
 let isFastSpeed = false; // Toggle for speed state
@@ -521,9 +686,9 @@ function updateSpeed() {
   // Alternate speed every 3 seconds
   if (elapsedTime - lastSpeedUpdate >= 3) {
     forwardSpeed = isFastSpeed ? 0.11 : forwardSpeed;
-    newColor = isFastSpeed ? 0xffffff : 0x00ff00;
-    newbackgroundColor = isFastSpeed ? 0xffffff : 0x111111;
-    scene.background = newbackgroundColor;
+    newColor = isFastSpeed ? 0xff0000 : 0x00ff00;
+    newbackgroundColor = isFastSpeed ? 0xff0000 : 0x05060a;
+    scene.background.set(newbackgroundColor);
 
     if (isFastSpeed) {
       playerLight.intensity = 25;
@@ -531,7 +696,7 @@ function updateSpeed() {
     }
     else {
       playerLight.intensity = 1.5;
-      playerLight.distance = 10;
+      playerLight.distance = 65;
     }
 
     platformMaterial.color.set(newColor);
@@ -543,124 +708,34 @@ function updateSpeed() {
 }
 
 function updatePlayer() {
+  // Walk around the inside of the tube (theta orbits the tunnel axis).
+  const angularStep = MOVE_LINEAR / (APOTHEM - STAND_OFFSET);
+  if (keys.ArrowLeft) theta -= angularStep;
+  else if (keys.ArrowRight) theta += angularStep;
 
-  if (gameStarted) {
-    player.position.z -= forwardSpeed; // Constant forward movement
+  const solid = isSolidAt(theta, player.position.z);
+
+  if (isJumping) {
+    // Jump arcs inward toward the axis, then gravity pulls back out.
+    velocityY += gravity;
+    hClear += velocityY;
+    if (velocityY <= 0 && hClear <= STAND_OFFSET && solid) {
+      hClear = STAND_OFFSET;
+      velocityY = 0;
+      isJumping = false;
+    }
+  } else if (solid) {
+    // Resting on a face.
+    hClear = STAND_OFFSET;
+    velocityY = 0;
+  } else {
+    // Open hole here: gravity pulls the player outward, through the gap.
+    velocityY += gravity;
+    hClear += velocityY;
   }
 
-  if (side == "right") {
-    player.rotation.z = 1 * Math.PI / 2; // Rotate player to face the wall
-
-    if (keys.ArrowLeft) {
-      player.position.y -= 0.1; // Move left
-    }
-    else if (keys.ArrowRight) {
-      player.position.y += 0.1; // Move right
-    }
-    // Check if the player should be falling
-    if (!checkPlatformRight()) {
-      velocityY += gravity;
-    } else if (!isJumping) {
-      velocityY = 0; // Reset vertical velocity when landing on a platform
-    }
-
-    player.position.x -= velocityY;
-  }
-  else if (side == "left") {
-    player.rotation.z = -1 * Math.PI / 2; // Rotate player to face the wall
-
-    if (keys.ArrowLeft) {
-      player.position.y += 0.1; // Move left
-    }
-    else if (keys.ArrowRight) {
-      player.position.y -= 0.1; // Move right
-    }
-    // Check if the player sh ould be falling
-    if (!checkPlatformLeft()) {
-      velocityY += gravity;
-    } else if (!isJumping) {
-      velocityY = 0; // Reset vertical velocity when landing on a platform
-    }
-
-    player.position.x += velocityY;
-  }
-  else if (side == "floor") {
-    player.rotation.z = player.rotation.z * 0; // Rotate player to face the wall
-    if (keys.ArrowLeft) {
-      player.position.x -= 0.1; // Move left
-    }
-    else if (keys.ArrowRight) {
-      player.position.x += 0.1; // Move right
-    }
-
-    // Check if the player should be falling
-    if (!checkPlatformBelow()) {
-      velocityY += gravity;
-    } else if (!isJumping) {
-      velocityY = 0; // Reset vertical velocity when landing on a platform
-    }
-
-    player.position.y += velocityY;
-  }
-  else if (side == "roof") {
-    player.rotation.z = Math.PI; // Rotate player to face the wall
-    if (keys.ArrowLeft) {
-      player.position.x += 0.1; // Move left
-    }
-    else if (keys.ArrowRight) {
-      player.position.x -= 0.1; // Move right
-    }
-
-    // Check if the player should be falling
-    if (!checkPlatformAbove()) {
-      velocityY += gravity;
-    } else if (!isJumping) {
-      velocityY = 0; // Reset vertical velocity when landing on a platform
-    }
-
-    player.position.y -= velocityY;
-  }
-
-
+  applyRadialPosition();
   animateLimbsAndAntennas();
-
-
-  // Stop the player from falling through the ground
-  if (player.position.y <= 1 && checkStartBelow()) {
-    player.position.y = 1;
-    velocityY = 0;
-    isJumping = false;
-    // side = "floor";
-  }
-
-  if (player.position.y <= 1 && checkPlatformBelow()) {
-    player.position.y = 1;
-    velocityY = 0;
-    isJumping = false;
-    // side = "floor";
-  }
-
-  if (player.position.x >= 6.5 && checkPlatformRight()) {
-    player.position.x = 6.5;
-    velocityY = 0;
-    isJumping = false;
-    side = "right";
-  } else if (player.position.x <= -6.5 && checkPlatformLeft()) {
-    player.position.x = -6.5;
-    velocityY = 0;
-    isJumping = false;
-    side = "left";
-  } else if (player.position.y <= 1.00000001 && checkPlatformBelow()) {
-    side = "floor";
-    player.position.y = 1;
-    velocityY = 0;
-    isJumping = false; 
-  } else if (player.position.y >= 8.9 && checkPlatformAbove()) {
-    player.position.y = 9;
-    velocityY = 0;
-    isJumping = false;
-    side = "roof";
-  }
 
   {
     // Left Arm Transformation
@@ -703,7 +778,8 @@ function updatePlayer() {
     rightArm.matrix.copy(rightArmTransform);
     rightArm.matrixAutoUpdate = false;
   }
-  if (player.position.y < fallThreshold || -player.position.y < fallThreshold || player.position.x < fallThreshold || -player.position.x < fallThreshold) {
+  // Fell out through a hole (clearance well past the wall plane) -> respawn.
+  if (hClear < -OUT_OF_BOUNDS) {
     resetPlayer();
   }
 }
@@ -734,6 +810,9 @@ document.addEventListener('keydown', (event) => {
     // Start the game if space is pressed
     if (!gameStarted) {
       gameStarted = true;
+      playCoinUpSound();
+      backgroundMusic.setVolume(0.05);
+      scoreElement.classList.add('visible');
     }
   }
 });
@@ -746,102 +825,99 @@ document.addEventListener('keyup', (event) => {
 
 
 
-// Camera follows player with smooth rotation
+// Camera trails behind the player and rolls with them around the tube so
+// "down" is always toward the current face, whatever shape the tunnel is.
 function updateCamera() {
-  const radius = 5; // Distance from the player
-  const blendingFactor = 0.05; // Adjust this for the smoothness of the transition
+  const blendingFactor = 0.08;
 
-  // Define the target camera position and up vector
-  let targetCameraPosition = new THREE.Vector3();
-  let targetUpVector = new THREE.Vector3();
+  // Inward direction (toward the tunnel axis) for the player's current angle.
+  const inX = -Math.sin(theta);
+  const inY = Math.cos(theta);
 
-  if (side === "left") {
-    const radians = THREE.MathUtils.degToRad(90); // 90-degree rotation for left wall
-    const x = player.position.x + radius * Math.sin(radians) - 2;
-    const z = player.position.z + radius * Math.cos(radians) + 5;
-    const y = player.position.y;
+  const targetCameraPosition = new THREE.Vector3(
+    player.position.x + inX * 2,
+    player.position.y + inY * 2,
+    player.position.z + 6
+  );
+  const targetUpVector = new THREE.Vector3(inX, inY, 0);
 
-    targetCameraPosition.set(x, y, z);
-    targetUpVector.set(1, 0, 0); // Camera "up" vector for left wall
-  } else if (side === "right") {
-    const radians = THREE.MathUtils.degToRad(-90); // 90-degree rotation for right wall
-    const x = player.position.x + radius * Math.sin(radians) + 2;
-    const z = player.position.z + radius * Math.cos(radians) + 5;
-    const y = player.position.y;
-
-    targetCameraPosition.set(x, y, z);
-    targetUpVector.set(-1, 0, 0); // Camera "up" vector for right wall
-  } else if (side === "floor") {
-    const radians = THREE.MathUtils.degToRad(0); // No rotation for floor
-    const x = player.position.x + radius * Math.sin(radians);
-    const z = player.position.z + radius * Math.cos(radians) + 1;
-    const y = player.position.y + 2;
-
-    targetCameraPosition.set(x, y, z);
-    targetUpVector.set(0, 1, 0); // Camera "up" vector for floor
-  } else if (side === "roof") {
-    const radians = THREE.MathUtils.degToRad(180); // 180 rotation for roof
-    const x = player.position.x + radius * Math.sin(radians);
-    const z = player.position.z + radius * -Math.cos(radians) + 1;
-    const y = player.position.y - 2;
-
-    targetCameraPosition.set(x, y, z);
-    targetUpVector.set(0, -1, 0); // Camera "up" vector for floor
-  }
-
-  // Smoothly interpolate camera position and up vector
   camera.position.lerp(targetCameraPosition, blendingFactor);
   camera.up.lerp(targetUpVector, blendingFactor);
-
-  // Make the camera look at the player
+  camera.up.normalize();
   camera.lookAt(player.position);
 }
 
-let score = 0; // Player's score
+let score = 0;
 let gameEnded = false;
 
-function checkWinCondition() {
-  // Check if the player has reached or passed the last platform's position
-  if (player.position.z <= endPositionZ && !gameEnded) {
-    pause = true; // Pause the game
-    gameEnded = true; // Set the game to ended
+const startingScreen = document.getElementById('startingScreen');
+const loadingScreen = document.getElementById('loadingScreen');
+const scoreElement = document.getElementById('score');
 
-    // Display the ending screen
-    const endingScreen = document.getElementById("endingScreen");
-    if (endingScreen) {
-      endingScreen.style.display = "flex";
+function updateTitleScreenEffects() {
+  const time = clock.getElapsedTime();
+
+  player.position.y = startPosition.y + Math.sin(time * 2.2) * 0.18;
+  player.rotation.y = Math.sin(time * 1.4) * 0.12;
+
+  const glowPulse = 0.18 + Math.sin(time * 3) * 0.08;
+  playerGlow.material.opacity = glowPulse;
+  playerLight.intensity = 2 + Math.sin(time * 3) * 0.6;
+  playerLight.color.setHSL(0.42, 0.85, 0.55 + Math.sin(time * 2) * 0.08);
+
+  starfield.rotation.y += 0.0004;
+  starfield.rotation.x += 0.00015;
+
+  const fgPositions = foregroundStars.geometry.attributes.position;
+  for (let i = 0; i < fgPositions.count; i++) {
+    let z = fgPositions.getZ(i) - 0.08;
+    if (z < -4) {
+      z = 14;
+      fgPositions.setX(i, THREE.MathUtils.randFloatSpread(28));
+      fgPositions.setY(i, THREE.MathUtils.randFloatSpread(16));
     }
+    fgPositions.setZ(i, z);
   }
+  fgPositions.needsUpdate = true;
+  animateLimbsAndAntennas();
 }
-
 
 function animate() {
   if (!pause && gameStarted && !gameEnded) {
-    updateSpeed(); // Update speed based on time
-    player.position.z -= forwardSpeed; // Constant forward movement
+    updateSpeed();
+    player.position.z -= forwardSpeed;
+    updateTunnel();
     updatePlayer();
-    checkWinCondition(); // Check if the player has won
 
-    // Update score
-    score = Math.abs(Math.floor(player.position.z)); // Use player's Z position for score
-    document.getElementById("score").textContent = `Score: ${score}`;
+    score = Math.abs(Math.floor(player.position.z));
+    scoreElement.textContent = `Score: ${score}`;
   }
 
-  // Display the appropriate screen
   if (gameStarted && !gameEnded) {
     startingScreen.style.display = 'none';
-    loadingScreen.style.display = pause ? "flex" : "none";
-    const endingScreen = document.getElementById("endingScreen");
+    loadingScreen.style.display = pause ? 'flex' : 'none';
+    foregroundStars.visible = false;
+    playerGlow.material.opacity = 0;
+    playerLight.intensity = 12;
+    playerLight.color.set(0xffffff);
+
+    const endingScreen = document.getElementById('endingScreen');
     if (endingScreen) {
-      endingScreen.style.display = "none"; // Hide the end screen
+      endingScreen.style.display = 'none';
     }
-    backgroundMusic.play();
+    if (!backgroundMusic.isPlaying) {
+      backgroundMusic.play();
+    }
   } else if (!gameStarted) {
-    startingScreen.style.display = "flex";
-    loadingScreen.style.display = "none";
-    const endingScreen = document.getElementById("endingScreen");
+    startingScreen.style.display = 'flex';
+    loadingScreen.style.display = 'none';
+    foregroundStars.visible = true;
+    scoreElement.classList.remove('visible');
+    updateTitleScreenEffects();
+
+    const endingScreen = document.getElementById('endingScreen');
     if (endingScreen) {
-      endingScreen.style.display = "none"; // Ensure the ending screen is hidden
+      endingScreen.style.display = 'none';
     }
     backgroundMusic.pause();
   }

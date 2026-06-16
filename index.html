@@ -1,72 +1,199 @@
 <!DOCTYPE html>
 <html lang="en">
-	<head>
-		<meta charset="utf-8">
-		<title>Run</title>
-		<style>
-			body { margin: 0; }
-		</style>
-	</head>
-	<body>
-		<script type="module" src="/main.js"></script>
-	</body>
+<head>
+	<meta charset="utf-8">
+	<meta name="viewport" content="width=device-width, initial-scale=1.0">
+	<title>Astro Dash</title>
+	<link rel="preconnect" href="https://fonts.googleapis.com">
+	<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+	<link href="https://fonts.googleapis.com/css2?family=Orbitron:wght@700;900&family=Share+Tech+Mono&display=swap" rel="stylesheet">
+	<style>
+		* { box-sizing: border-box; }
+
+		body {
+			margin: 0;
+			overflow: hidden;
+			font-family: 'Share Tech Mono', monospace;
+		}
+
+		canvas { display: block; }
+
+		#score {
+			position: fixed;
+			top: 16px;
+			left: 16px;
+			font-size: 22px;
+			color: #e0f4ff;
+			font-family: 'Orbitron', sans-serif;
+			z-index: 100;
+			text-shadow: 0 0 8px rgba(0, 200, 255, 0.6);
+			opacity: 0;
+			transform: translateY(-8px);
+			transition: opacity 0.4s ease, transform 0.4s ease;
+			pointer-events: none;
+		}
+
+		#score.visible {
+			opacity: 1;
+			transform: translateY(0);
+		}
+
+		#startingScreen {
+			display: flex;
+			flex-direction: column;
+			align-items: center;
+			justify-content: space-between;
+			position: fixed;
+			inset: 0;
+			z-index: 1000;
+			padding: 8vh 24px 6vh;
+			pointer-events: none;
+			background: radial-gradient(
+				ellipse at center,
+				rgba(8, 12, 32, 0.35) 0%,
+				rgba(4, 6, 18, 0.55) 45%,
+				rgba(0, 0, 0, 0.72) 100%
+			);
+			backdrop-filter: blur(2px);
+		}
+
+		.title-block {
+			text-align: center;
+			margin-top: 4vh;
+		}
+
+		.game-title {
+			margin: 0;
+			font-family: 'Orbitron', sans-serif;
+			font-weight: 900;
+			font-size: clamp(2.8rem, 8vw, 5.5rem);
+			letter-spacing: 0.18em;
+			line-height: 1.05;
+			color: #fff;
+			text-transform: uppercase;
+			text-shadow:
+				0 0 10px #ff2d95,
+				0 0 24px #ff2d95,
+				0 0 48px rgba(255, 45, 149, 0.5),
+				0 0 80px rgba(0, 200, 255, 0.35);
+			animation: title-flicker 4s ease-in-out infinite;
+		}
+
+		.game-title .dash {
+			display: block;
+			font-size: 0.72em;
+			letter-spacing: 0.35em;
+			color: #00e5ff;
+			text-shadow:
+				0 0 10px #00e5ff,
+				0 0 30px rgba(0, 229, 255, 0.6),
+				0 0 60px rgba(0, 229, 255, 0.3);
+		}
+
+		.title-tagline {
+			margin: 1rem 0 0;
+			font-size: clamp(0.75rem, 2vw, 0.95rem);
+			letter-spacing: 0.35em;
+			color: rgba(180, 220, 255, 0.55);
+			text-transform: uppercase;
+		}
+
+		.prompt-block {
+			text-align: center;
+			margin-bottom: 2vh;
+		}
+
+		.start-prompt {
+			margin: 0;
+			font-family: 'Share Tech Mono', monospace;
+			font-size: clamp(0.95rem, 2.5vw, 1.25rem);
+			letter-spacing: 0.12em;
+			color: #c8f0ff;
+			text-shadow: 0 0 12px rgba(0, 229, 255, 0.5);
+			animation: prompt-pulse 1.6s ease-in-out infinite;
+		}
+
+		.start-hint {
+			margin: 0.6rem 0 0;
+			font-size: 0.75rem;
+			letter-spacing: 0.2em;
+			color: rgba(200, 240, 255, 0.35);
+		}
+
+		@keyframes title-flicker {
+			0%, 100% { opacity: 1; filter: brightness(1); }
+			92% { opacity: 1; }
+			93% { opacity: 0.85; filter: brightness(1.2); }
+			94% { opacity: 1; }
+			96% { opacity: 0.9; }
+		}
+
+		@keyframes prompt-pulse {
+			0%, 100% { opacity: 1; transform: scale(1); }
+			50% { opacity: 0.45; transform: scale(0.98); }
+		}
+
+		#loadingScreen {
+			display: none;
+			position: fixed;
+			top: 0;
+			right: 0;
+			width: 300px;
+			padding: 14px 16px;
+			background: rgba(4, 8, 24, 0.88);
+			border: 1px solid rgba(0, 229, 255, 0.3);
+			border-right: none;
+			border-top: none;
+			border-bottom-left-radius: 12px;
+			color: #c8f0ff;
+			font-family: 'Share Tech Mono', monospace;
+			font-size: 15px;
+			text-align: center;
+			z-index: 1000;
+			box-shadow: 0 0 20px rgba(0, 229, 255, 0.15);
+		}
+
+		#loadingScreen p { margin: 0; }
+
+		#endingScreen {
+			display: none;
+			position: fixed;
+			inset: 0;
+			background: rgba(0, 0, 0, 0.82);
+			color: white;
+			justify-content: center;
+			align-items: center;
+			flex-direction: column;
+			font-family: 'Orbitron', sans-serif;
+			font-size: 2em;
+			z-index: 1000;
+			text-shadow: 0 0 20px rgba(255, 45, 149, 0.6);
+		}
+	</style>
+</head>
+<body>
+	<div id="score">Score: 0</div>
+
+	<div id="startingScreen">
+		<div class="title-block">
+			<h1 class="game-title">ASTRO<span class="dash">DASH</span></h1>
+			<p class="title-tagline">Endless Runner · Deep Space</p>
+		</div>
+		<div class="prompt-block">
+			<p class="start-prompt">▶ PRESS SPACE TO START</p>
+			<p class="start-hint">WASD / ARROWS TO MOVE · P TO PAUSE</p>
+		</div>
+	</div>
+
+	<div id="loadingScreen">
+		<p>Game Paused</p>
+		<p style="margin-top: 8px;">Press P to Resume</p>
+	</div>
+
+	<div id="endingScreen">
+		<p>Congratulations! You Won!</p>
+	</div>
+
+	<script type="module" src="/main.js"></script>
+</body>
 </html>
-
-<div id="loadingScreen" style="
-    display: none; 
-    position: fixed; 
-    top: 0; 
-    right: 0; 
-    width: 300px; 
-    height: 100px; 
-    background-color: rgba(0, 0, 0, 0.8); 
-    color: white; 
-    font-size: 18px; 
-    padding: 10px; 
-    z-index: 1000;
-    border-bottom-left-radius: 10px;
-    font-family: 'Arial', sans-serif; 
-    text-align: center;
-">
-    <p style="margin: 0;">Game Paused</p>
-	<p></p>
-    <p style="margin: 0;">Press P to Resume</p>
-</div>
-
-<div id="startingScreen" style="
-    display: block; 
-    position: fixed; 
-    top: 50%; 
-    left: 50%; 
-    transform: translate(-50%, -50%); 
-    width: 400px; 
-    height: 200px; 
-    background-color: rgba(0, 0, 0, 0.9); 
-    color: white; 
-    font-size: 24px; 
-    padding: 20px; 
-    z-index: 1000;
-    border-radius: 10px;
-    font-family: 'Arial', sans-serif; /* Custom font */
-    text-align: center;
-">
-    <p style="margin: 0;">Welcome to the Game! Press Space to Start</p>
-    <!-- <p style="margin: 10px 0;"></p> -->
-</div>
-
-
-<div id="score" style=
-	"position: absolute; 
-	top: 10px; 
-	left: 10px; 
-	font-size: 24px; 
-	color: white; 
-	font-family: Arial, sans-serif; 
-	z-index: 1;">
-	Score: 0
-</div>
-  
-<div id="endingScreen" style="display: block; position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: rgba(0, 0, 0, 0.8); color: white; display: flex; justify-content: center; align-items: center; flex-direction: column; font-size: 2em;">
-<p>Congratulations! You Won!</p>
-</div>
-  
